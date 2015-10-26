@@ -1,5 +1,11 @@
 #!/bin/bash
 
+echo -n "Unpackaging data..."
+cd data
+cat iso.vtk.aa  iso.vtk.ab  iso.vtk.ac  iso.vtk.ad  iso.vtk.ae > ../iso.vtk
+cd ..
+echo "done!"
+
 cmake \
     -DCMAKE_CXX_COMPILER=`which g++` \
     -DCMAKE_C_COMPILER=`which gcc` \
@@ -8,4 +14,3 @@ cmake \
     -DCMAKE_CXX_FLAGS_RELEASE="-Wall -Wextra -DNDEBUG -Ofast -march=native -mavx -ffast-math -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-local-typedefs -fopt-info-optimized" \
     -DCMAKE_CXX_FLAGS_DEBUG="-g3 -Wall -Wextra" \
     ..
-
