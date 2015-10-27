@@ -7,18 +7,53 @@ using namespace std;
 #include <vtkPolyDataWriter.h>
 #include <vtkDepthSortPolyData.h>
 #include "vtkDepthSortPolyData2.h"
-
 #include <sys/time.h>
+
 static double elapsed(timeval &tv0, timeval &tv1)
 { return tv1.tv_sec - tv0.tv_sec + (tv1.tv_usec - tv0.tv_usec)/1e6; }
+
+int getModeNumber(char code)
+{
+    switch (code)
+    {
+        case '1': return VTK_SORT_FIRST_POINT; break;
+        case '2': return VTK_SORT_BOUNDS_CENTER; break;
+        case '3': return VTK_SORT_PARAMETRIC_CENTER; break;
+    }
+    return -1;
+}
+
+const char *getModeString(char code)
+{
+    switch (code)
+    {
+        case '1': return "first point"; break;
+        case '2': return "axes aligned bounds"; break;
+        case '3': return "parametric center"; break;
+    }
+    return "invalid";
+}
+
+const char *getCodeString(char code)
+{
+    switch (code)
+    {
+        case '1': return "old"; break;
+        case '2': return "new"; break;
+    }
+    return "invalid";
+}
 
 int main(int ac, char **av)
 {
     if (ac != 4)
     {
-        cerr << "ERROR: must provide 1) mode 2) input file 3) output file." << endl
-            << "mode can be either \"1\" for the old class or "
-            "\"2\" for the new class" << endl;
+        cerr << "ERROR: must provide 1) mode 2) input file 3) output file." << endl << endl
+            << "where: mode is a two char string. The first char can be either \"1\" for the old class or "
+            "\"2\" for the new class. the second char can be either \"1\" to sort by cells "
+            "first point, \"2\" to sort by the cells axis aligned bounding box centroid, or "
+            "\"3\" to sort by the cells paramteric centroid. If the output file is \"\" output "
+            "is skipped." << endl;
         return -1;
     }
 
@@ -39,7 +74,7 @@ int main(int ac, char **av)
         vtkDepthSortPolyData *ds = vtkDepthSortPolyData::New();
         ds->SetCamera(cam);
         ds->SortScalarsOn();
-        //ds->SetDepthSortModeToBoundsCenter();
+        ds->SetDepthSortMode(getModeNumber(av[1][1]));
         a = static_cast<vtkDepthSortPolyData*>(ds);
     }
     else
@@ -47,7 +82,7 @@ int main(int ac, char **av)
         vtkDepthSortPolyData2 *ds = vtkDepthSortPolyData2::New();
         ds->SetCamera(cam);
         ds->SortScalarsOn();
-        //ds->SetDepthSortModeToBoundsCenter();
+        ds->SetDepthSortMode(getModeNumber(av[1][1]));
         a = static_cast<vtkDepthSortPolyData2*>(ds);
     }
 
@@ -63,7 +98,8 @@ int main(int ac, char **av)
 
     gettimeofday(&tv1, 0);
     cerr << "ok!" << endl
-        << "update time = " << elapsed(tv0, tv1) << endl;
+        << getCodeString(av[1][0]) << " code sorting by " << getModeString(av[1][1])
+        << " = " << elapsed(tv0, tv1) << " seconds" << endl;
 
     if (strlen(av[3]))
     {
