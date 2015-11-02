@@ -15,9 +15,9 @@ param corresponds to VTK_SORT_PARAMETRIC_CENTER.
 
 code | point | bounds | param
 -----|-------|--------|------
-old | 2.58 | 3.05 | 3.19
-new | 0.82 | 1.02 | 1.65
-speed up | 3.14 | 2.98 | 1.93
+old | 2.58 sec | 3.05 sec | 3.19 sec
+new | 0.82 sec | 1.02 sec | 1.65 sec
+speed up | 3.14 x | 2.98 x | 1.93 x
 
 ## Optimizations ##
 vtkDepthSortPolyData was changed as follows:
