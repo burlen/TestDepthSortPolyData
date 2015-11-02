@@ -25,8 +25,8 @@
 // The sort operation will not work well for long, thin primitives, or cells
 // that intersect, overlap, or interpenetrate each other.
 
-#ifndef __vtkDepthSortPolyData2_h
-#define __vtkDepthSortPolyData2_h
+#ifndef vtkDepthSortPolyData2_h
+#define vtkDepthSortPolyData2_h
 
 #include "vtkFiltersHybridModule.h" // For export macro
 #include "vtkPolyDataAlgorithm.h"
@@ -92,7 +92,8 @@ public:
   // has effect if the direction is set to front-to-back or back-to-front,
   // and a camera is specified. Specifying the vtkProp3D is optional.
   void SetProp3D(vtkProp3D *);
-  vtkProp3D *GetProp3D();
+  vtkProp3D *GetProp3D()
+  { return this->Prop3D; }
 
   // Description:
   // Set/Get the sort direction. This ivar only has effect if the sort

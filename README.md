@@ -1,7 +1,8 @@
 # Updates for vtkDepthSortPolyData #
 this is a test harness used to profile and optimize
 vtkDepthSortPolyData. The main is in *ds.cpp* and the
-optimized code is in *vtkDepthSortPolyData2.cxx*
+optimized code is in *vtkDepthSortPolyData2.cxx* *vtkPolyData*
+has been patched.
 
 ## Compiling ##
 I assume you make a directory called bin inside the source and
@@ -24,7 +25,7 @@ the stderr. Use "" for output if you want to skip writing the result.
 ./ds 2 ../iso.vtk ""`
 
 ## Optimizations ##
-The code is changed as follows:
+vtkDepthSortPolyData was changed as follows:
 * transfrom GetCell to GetCellPoints. Building the cell is expensive
   and we only need points to determine the depth. We can also then
   access the points in place.
@@ -33,6 +34,13 @@ The code is changed as follows:
   virtual GetValue API
 * restructure bounds computations so that it can be vectorized
   by the compiler.
+* Allocate the exact amount of memmory for the output and
+  build the output without using virtual API
+
+vtkPolyData was changed as follows:
+* inline the non-virtual overload of GetCellPoints.
+* avoid virtual API in BuildCells
+* add a NeedToBuildCells to check that fast API can safely be used
 
 ## Test Data ##
 Test data is in the file *iso.vtk*. This file contains 10 iso-surfaces
@@ -42,5 +50,12 @@ It is too large to store in github, so I split it into 50M files. The
 config.sh script will merge them.
 
 ## Results ##
-The optimization acheive 1.8 times speed-up on the included test data
-when cell center sorting criteria.
+![comparison](images/depth_sort_speedup.png)
+
+
+code | point | bounds | param
+-----|-------|--------|------
+old | 2.58 | 3.05 | 3.19
+new | 0.82 | 1.02 | 1.65
+speed up | 3.14 | 2.98 | 1.93
+

@@ -45,58 +45,25 @@
 #include <limits>
 #include <cstdlib>
 
-vtkStandardNewMacro(vtkDepthSortPolyData2);
-
-vtkCxxSetObjectMacro(vtkDepthSortPolyData2,Camera,vtkCamera);
-
-vtkDepthSortPolyData2::vtkDepthSortPolyData2()
-{
-  this->Camera = NULL;
-  this->Prop3D = NULL;
-  this->Direction = VTK_DIRECTION_BACK_TO_FRONT;
-  this->DepthSortMode = VTK_SORT_FIRST_POINT;
-  this->Vector[0] = this->Vector[1] = 0.0;
-  this->Vector[2] = 0.0;
-  this->Origin[0] = this->Origin[1] = this->Origin[2] = 0.0;
-  this->Transform = vtkTransform::New();
-  this->SortScalars = 0;
-}
-
-vtkDepthSortPolyData2::~vtkDepthSortPolyData2()
-{
-  this->Transform->Delete();
-
-  if ( this->Camera )
-    {
-    this->Camera->Delete();
-    }
-
-  //Note: vtkProp3D is not deleted to avoid reference count cycle
-}
-
-// Don't reference count to avoid nasty cycle
-void vtkDepthSortPolyData2::SetProp3D(vtkProp3D *prop3d)
-{
-  if ( this->Prop3D != prop3d )
-    {
-    this->Prop3D = prop3d;
-    this->Modified();
-    }
-}
-
-vtkProp3D *vtkDepthSortPolyData2::GetProp3D()
-{
-  return this->Prop3D;
-}
-
 namespace {
-template <typename T>
-bool greater(const T *l, const T *r)
-{ return l[0] > r[0]; }
 
 template <typename T>
-bool less(const T *l, const T *r)
-{ return l[0] < r[0]; }
+struct greaterf
+{
+  greaterf(const T *az): z(az) {}
+  bool operator()(vtkIdType l, vtkIdType r) const
+  { return z[l] > z[r]; }
+  const T *z;
+};
+
+template <typename T>
+struct lessf
+{
+  lessf(const T *az): z(az) {}
+  bool operator()(vtkIdType l, vtkIdType r) const
+  { return z[l] < z[r]; }
+  const T *z;
+};
 
 template <typename T> struct ptsVTKTt {};
 template <> struct ptsVTKTt<float> { typedef vtkFloatArray vtkType; };
@@ -112,6 +79,20 @@ template <> struct ptsVTKTt<long long> { typedef vtkLongLongArray vtkType; };
 template <> struct ptsVTKTt<unsigned long long> { typedef vtkUnsignedLongLongArray vtkType; };
 template <> struct ptsVTKTt<short> { typedef vtkShortArray vtkType; };
 template <> struct ptsVTKTt<unsigned short> { typedef vtkUnsignedShortArray vtkType; };
+
+template <typename T>
+T getCellBoundsCenter(vtkIdType *pids, vtkIdType nPids, const T *px)
+{
+  T mn = nPids ? px[3*pids[0]] : T();
+  T mx = mn;
+  for (vtkIdType i = 1; i < nPids; ++i)
+    {
+    T v = px[3*pids[i]];
+    mn = v < mn ? v : mn;
+    mx = v > mx ? v : mx;
+    }
+  return (mn + mx)/T(2);
+}
 
 template <typename T>
 T getCellMin(vtkIdType *pids, vtkIdType nPids, const T *px)
@@ -139,8 +120,7 @@ T getCellMax(vtkIdType *pids, vtkIdType nPids, const T *px)
 
 template <typename T>
 void getCellCenterDepth(vtkPolyData *pds, vtkDataArray *gpts,
-    vtkIdType nCells, T x0, T y0, T z0, T vx, T vy, T vz,
-    T *&d, T **&dd)
+    vtkIdType nCells, T x0, T y0, T z0, T vx, T vy, T vz, T *&d)
 {
   if (nCells < 1)
     {
@@ -157,41 +137,46 @@ void getCellCenterDepth(vtkPolyData *pds, vtkDataArray *gpts,
 
   // this call insures that BuildCells gets done if it's
   // needed and we can use the faster GetCellPoints api
-  // that doesn't check
-  pds->GetCellType(0);
+  // that doesn't check. We don't want to call BuildCells
+  // directly.
+  if (pds->NeedToBuildCells())
+    {
+    pds->BuildCells();
+    }
 
-  d = static_cast<T*>(malloc(sizeof(T)*nCells));
-  dd = static_cast<T**>(malloc(sizeof(T*)*nCells));
+  // compute cell centers
+  size_t nn = nCells*sizeof(T);
+  T *cx = static_cast<T*>(malloc(nn));
+  T *cy = static_cast<T*>(malloc(nn));
+  T *cz = static_cast<T*>(malloc(nn));
   for (vtkIdType cid = 0; cid < nCells; ++cid)
     {
-    // get the cell points using the fast api
+    // get the cell point ids using the fast api
     vtkIdType *pids = NULL;
     vtkIdType nPids = 0;
     pds->GetCellPoints(cid, nPids, pids);
 
-    // compute the cell bounds
-    T xmn = getCellMin(pids, nPids, px);
-    T xmx = getCellMax(pids, nPids, px);
-
-    T ymn = getCellMin(pids, nPids, py);
-    T ymx = getCellMax(pids, nPids, py);
-
-    T zmn = getCellMin(pids, nPids, pz);
-    T zmx = getCellMax(pids, nPids, pz);
-
-    // compute the distance to the cell center
-    d[cid] = (((xmn + xmx)/T(2)) - x0)*vx
-      + (((ymn + ymx)/T(2)) - y0)*vy + (((zmn + zmx)/T(2)) - z0)*vz;
-
-    // set up the sort structure
-    dd[cid] = d + cid;
+    // compute the center of the cell bounds
+    cx[cid] = getCellBoundsCenter(pids, nPids, px);
+    cy[cid] = getCellBoundsCenter(pids, nPids, py);
+    cz[cid] = getCellBoundsCenter(pids, nPids, pz);
     }
+
+  // compute the distance to the cell center
+  d = static_cast<T*>(malloc(nn));
+  for (vtkIdType cid = 0; cid < nCells; ++cid)
+    {
+    d[cid] = (cx[cid] - x0)*vx + (cy[cid] - y0)*vy + (cz[cid]- z0)*vz;
+    }
+
+  free(cx);
+  free(cy);
+  free(cz);
 }
 
 template <typename T>
 void getCellPoint0Depth(vtkPolyData *pds, vtkDataArray *gpts,
-    vtkIdType nCells, T x0, T y0, T z0, T vx, T vy, T vz,
-    T *&d, T **&dd)
+    vtkIdType nCells, T x0, T y0, T z0, T vx, T vy, T vz, T *&d)
 {
   if (nCells < 1)
     {
@@ -209,26 +194,76 @@ void getCellPoint0Depth(vtkPolyData *pds, vtkDataArray *gpts,
   // this call insures that BuildCells gets done if it's
   // needed and we can use the faster GetCellPoints api
   // that doesn't check
-  pds->GetCellType(0);
+  if (pds->NeedToBuildCells())
+    {
+    pds->BuildCells();
+    }
 
-  d = static_cast<T*>(malloc(sizeof(T)*nCells));
-  dd = static_cast<T**>(malloc(sizeof(T*)*nCells));
+  size_t nn = nCells*sizeof(T);
+  T *cx = static_cast<T*>(malloc(nn));
+  T *cy = static_cast<T*>(malloc(nn));
+  T *cz = static_cast<T*>(malloc(nn));
+  vtkIdType *pids = NULL;
+  vtkIdType nPids = 0;
   for (vtkIdType cid = 0; cid < nCells; ++cid)
     {
-    // get the cell points using the fast api
-    vtkIdType *pids = NULL;
-    vtkIdType nPids = 0;
+    // get the cell point ids using the fast api
     pds->GetCellPoints(cid, nPids, pids);
-
-    // compute the distance to the cell's first point
     vtkIdType ii = pids[0];
-    d[cid] = (px[3*ii] - x0)*vx + (py[3*ii] - y0)*vy + (pz[3*ii] - z0)*vz;
-
-    // set up the sort structure
-    dd[cid] = d + cid;
+    cx[cid] = px[3*ii];
+    cy[cid] = py[3*ii];
+    cz[cid] = pz[3*ii];
     }
+
+  d = static_cast<T*>(malloc(sizeof(T)*nCells));
+  for (vtkIdType cid = 0; cid < nCells; ++cid)
+    {
+    // compute the distance to the cell's first point
+    d[cid] = (cx[cid] - x0)*vx + (cy[cid] - y0)*vy + (cz[cid] - z0)*vz;
+    }
+
+  free(cx);
+  free(cy);
+  free(cz);
 }
 };
+
+vtkStandardNewMacro(vtkDepthSortPolyData2);
+
+vtkCxxSetObjectMacro(vtkDepthSortPolyData2,Camera,vtkCamera);
+
+vtkDepthSortPolyData2::vtkDepthSortPolyData2()
+{
+  this->Camera = NULL;
+  this->Prop3D = NULL;
+  this->Direction = VTK_DIRECTION_BACK_TO_FRONT;
+  this->DepthSortMode = VTK_SORT_FIRST_POINT;
+  this->Vector[0] = this->Vector[1] = this->Vector[2] = 0.0;
+  this->Origin[0] = this->Origin[1] = this->Origin[2] = 0.0;
+  this->Transform = vtkTransform::New();
+  this->SortScalars = 0;
+}
+
+vtkDepthSortPolyData2::~vtkDepthSortPolyData2()
+{
+  this->Transform->Delete();
+
+  if ( this->Camera )
+    {
+    this->Camera->Delete();
+    }
+  //Note: vtkProp3D is not deleted to avoid reference count cycle
+}
+
+void vtkDepthSortPolyData2::SetProp3D(vtkProp3D *prop3d)
+{
+  if ( this->Prop3D != prop3d )
+    {
+    // Don't reference count to avoid nasty cycle
+    this->Prop3D = prop3d;
+    this->Modified();
+    }
+}
 
 int vtkDepthSortPolyData2::RequestData(
   vtkInformation *vtkNotUsed(request),
@@ -244,7 +279,6 @@ int vtkDepthSortPolyData2::RequestData(
     inInfo->Get(vtkDataObject::DATA_OBJECT()));
   vtkPolyData *output = vtkPolyData::SafeDownCast(
     outInfo->Get(vtkDataObject::DATA_OBJECT()));
-
 
   // Compute the sort vector
   double vector[3] = {0.0};
@@ -268,10 +302,23 @@ int vtkDepthSortPolyData2::RequestData(
   vtkPolyData *tmpInput = vtkPolyData::New();
   tmpInput->CopyStructure(input);
 
-  vtkIdType nCells=input->GetNumberOfCells();
+  vtkIdType nCells = input->GetNumberOfCells();
 
-  vtkIdType *orderedIds
-    = static_cast<vtkIdType*>(malloc(nCells*sizeof(vtkIdType)));
+  size_t nn = nCells*sizeof(vtkIdType);
+  vtkIdType *order = static_cast<vtkIdType*>(malloc(nn));
+  for (vtkIdType cid = 0; cid < nCells; ++cid)
+    {
+    order[cid] = cid;
+    }
+
+  vtkIdTypeArray *newCellIds = NULL;
+  if (this->SortScalars)
+    {
+    newCellIds = vtkIdTypeArray::New();
+    newCellIds->SetName("sortedCellIds");
+    newCellIds->SetNumberOfTuples(nCells);
+    memcpy(newCellIds->GetPointer(0), order, nn);
+    }
 
   if (nCells)
     {
@@ -293,36 +340,30 @@ int vtkDepthSortPolyData2::RequestData(
 
           // compute the cell's depth
           VTK_TT *d = NULL; // depths
-          VTK_TT **dd = NULL; // sort structure
           if (this->DepthSortMode == VTK_SORT_FIRST_POINT)
             {
             ::getCellPoint0Depth(
-              tmpInput, pts, nCells, x0, y0, z0, vx, vy, vz, d, dd);
+              tmpInput, pts, nCells, x0, y0, z0, vx, vy, vz, d);
             }
           else
             {
             ::getCellCenterDepth(
-              tmpInput, pts, nCells, x0, y0, z0, vx, vy, vz, d, dd);
+              tmpInput, pts, nCells, x0, y0, z0, vx, vy, vz, d);
             }
 
-          // sort
+          // sort cell ids by depth
           if (this->Direction == VTK_DIRECTION_FRONT_TO_BACK)
             {
-            std::sort(dd, dd + nCells, ::less<VTK_TT>);
+            ::lessf<VTK_TT> comp(d);
+            std::sort(order, order + nCells, comp);
             }
           else
             {
-            std::sort(dd, dd + nCells, ::greater<VTK_TT>);
-            }
-
-          // get the cell id order
-          for (vtkIdType i = 0; i < nCells; ++i)
-            {
-            orderedIds[i] = dd[i] - d;
+            ::greaterf<VTK_TT> comp(d);
+            std::sort(order, order + nCells, comp);
             }
 
           free(d);
-          free(dd);
           );
         }
       }
@@ -336,7 +377,6 @@ int vtkDepthSortPolyData2::RequestData(
       size_t maxCellSize = input->GetMaxCellSize();
       double *w = static_cast<double*>(malloc(maxCellSize*sizeof(double)));
       double *d = static_cast<double*>(malloc(nCells*sizeof(double)));
-      double **dd = static_cast<double**>(malloc(nCells*sizeof(double*)));
       for (vtkIdType cid = 0; cid < nCells; ++cid)
         {
         tmpInput->GetCell(cid, cell);
@@ -346,30 +386,22 @@ int vtkDepthSortPolyData2::RequestData(
         // compute the distance
         d[cid] = (x[0] - origin[0])*vector[0]
             + (x[1] - origin[1])*vector[1] + (x[2] - origin[2])*vector[2];
-
-        // set up the sort structure
-        dd[cid] = d + cid;
         }
 
       // sort
       if (this->Direction == VTK_DIRECTION_FRONT_TO_BACK)
         {
-        std::sort(dd, dd + nCells, ::less<double>);
+        ::lessf<double> comp(d);
+        std::sort(order, order + nCells, comp);
         }
       else
         {
-        std::sort(dd, dd + nCells, ::greater<double>);
-        }
-
-      // get the cell id order
-      for (vtkIdType i = 0; i < nCells; ++i)
-        {
-        orderedIds[i] = dd[i] - d;
+        ::greaterf<double> comp(d);
+        std::sort(order, order + nCells, comp);
         }
 
       free(w);
       free(d);
-      free(dd);
       cell->Delete();
       }
     }
@@ -378,37 +410,78 @@ int vtkDepthSortPolyData2::RequestData(
   vtkCellData *inCD = input->GetCellData();
   vtkCellData *outCD = output->GetCellData();
   outCD->CopyAllocate(inCD);
-  output->Allocate(tmpInput, nCells);
+
+  // pass point through
   output->SetPoints(input->GetPoints());
   output->GetPointData()->PassData(input->GetPointData());
 
+  // allocate the cells for the output
+  vtkIdTypeArray *outputVerts = output->GetVerts()->GetData();
+  outputVerts->SetNumberOfTuples(input->GetVerts()->GetSize());
+  vtkIdType *pOutputVerts = outputVerts->GetPointer(0);
+
+  vtkIdTypeArray *outputLines = output->GetLines()->GetData();
+  outputLines->SetNumberOfTuples(input->GetLines()->GetSize());
+  vtkIdType *pOutputLines = outputLines->GetPointer(0);
+
+  vtkIdTypeArray *outputPolys = output->GetPolys()->GetData();
+  outputPolys->SetNumberOfTuples(input->GetPolys()->GetSize());
+  vtkIdType *pOutputPolys = outputPolys->GetPointer(0);
+
+  vtkIdTypeArray *outputStrips = output->GetStrips()->GetData();
+  outputStrips->SetNumberOfTuples(input->GetStrips()->GetSize());
+  vtkIdType *pOutputStrips = outputStrips->GetPointer(0);
+
   for (vtkIdType i = 0; i < nCells; ++i)
     {
-    // get the cell points using the "fast" api
+    // get the cell points using the fast api
     vtkIdType *pids = NULL;
     vtkIdType nPids = 0;
-    vtkIdType cid = orderedIds[i];
-    tmpInput->GetCellPoints(cid, nPids, pids);
-    int ctype = tmpInput->GetCellType(cid);
+    vtkIdType cid = order[i];
+    unsigned char ctype = tmpInput->GetCellPoints(cid, nPids, pids);
 
-    // add to the ouput
-    vtkIdType newId = output->InsertNextCell(ctype, nPids, pids);
+    // build the cell
+    switch (ctype)
+      {
+      case VTK_VERTEX: case VTK_POLY_VERTEX:
+        memcpy(pOutputVerts, pids, nPids*sizeof(vtkIdType));
+        pOutputVerts += nPids + 1;
+        break;
 
+      case VTK_LINE: case VTK_POLY_LINE:
+        memcpy(pOutputLines, pids, nPids*sizeof(vtkIdType));
+        pOutputLines += nPids + 1;
+        break;
+
+      case VTK_TRIANGLE: case VTK_QUAD: case VTK_POLYGON:
+        memcpy(pOutputPolys, pids, nPids*sizeof(vtkIdType));
+        pOutputPolys += nPids + 1;
+        break;
+
+      case VTK_TRIANGLE_STRIP:
+        memcpy(pOutputStrips, pids, nPids*sizeof(vtkIdType));
+        pOutputStrips += nPids + 1;
+        break;
+      }
     // copy over data
-    outCD->CopyData(inCD, cid, newId);
+    outCD->CopyData(inCD, cid, i);
     }
 
   if (this->SortScalars)
     {
     // add the sort indices
-    vtkIdTypeArray *sortScalars = vtkIdTypeArray::New();
-    sortScalars->SetArray(orderedIds, nCells, 0, 0);
-    output->GetCellData()->SetScalars(sortScalars);
-    sortScalars->Delete();
+    output->GetCellData()->AddArray(newCellIds);
+    newCellIds->Delete();
+
+    vtkIdTypeArray *oldCellIds = vtkIdTypeArray::New();
+    oldCellIds->SetName("originalCellIds");
+    oldCellIds->SetArray(order, nCells, 0, 0);
+    output->GetCellData()->AddArray(oldCellIds);
+    oldCellIds->Delete();
     }
   else
     {
-    free(orderedIds);
+    free(order);
     }
 
   tmpInput->Delete();
