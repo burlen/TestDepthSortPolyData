@@ -4,25 +4,20 @@ vtkDepthSortPolyData. The main is in *ds.cpp* and the
 optimized code is in *vtkDepthSortPolyData2.cxx* *vtkPolyData*
 has been patched.
 
-## Compiling ##
-I assume you make a directory called bin inside the source and
-cd into it.
+## Results ##
+Timing of the old and new code are shown below. Each of the 3 sorting
+methods provided have been tested. In the figure, point corresponds to
+VTK_SORT_FIRST_POINT, bounds corresponds to VTK_SORT_BOUNDS_CENTER, and 
+param corresponds to VTK_SORT_PARAMETRIC_CENTER.
 
-Becasuse some of the optimization require specific compiler flags
-use the shell script to configure. You might have to change these
-flags for your system. Use the same flags to build VTK if you desire
-a fair comparison.
+![comparison](images/depth_sort_speedup.png)
 
-`../configure.sh
-make`
 
-## Running ##
-Pass "1" for old code or "2" for new code on the command line and
-input and output file names. Time to run the depth sort is sent to
-the stderr. Use "" for output if you want to skip writing the result.
-
-`./ds 1 ../iso.vtk ""
-./ds 2 ../iso.vtk ""`
+code | point | bounds | param
+-----|-------|--------|------
+old | 2.58 | 3.05 | 3.19
+new | 0.82 | 1.02 | 1.65
+speed up | 3.14 | 2.98 | 1.93
 
 ## Optimizations ##
 vtkDepthSortPolyData was changed as follows:
@@ -49,13 +44,27 @@ scalar fields, 8.1M cells, and 4.1M points. The file is approx 250MB.
 It is too large to store in github, so I split it into 50M files. The
 config.sh script will merge them.
 
-## Results ##
-![comparison](images/depth_sort_speedup.png)
+## Compiling ##
+I assume you make a directory called bin inside the source and
+cd into it.
 
+Becasuse some of the optimization require specific compiler flags
+use the shell script to configure. You might have to change these
+flags for your system. Use the same flags to build VTK if you desire
+a fair comparison.
 
-code | point | bounds | param
------|-------|--------|------
-old | 2.58 | 3.05 | 3.19
-new | 0.82 | 1.02 | 1.65
-speed up | 3.14 | 2.98 | 1.93
+`../configure.sh
+make`
 
+## Running ##
+Pass a 2 character mode string  and
+input and output file names on the command line. Time to run the depth sort is sent to
+the stderr. The 2 character mode string is composed of code character and sort character.
+To select the code use 1 for the old code and 2 for the new. To select the mode use 1
+for VTK_SORT_FIRST_POINT, use 2 for VTK_SORT_BOUNDS_CENTER, and 3 for VTK_SORT_PARAMETRIC_CENTER.
+Use "" for output file name if you want to skip writing the result.
+
+for example:
+`./ds 12 ../iso.vtk ""
+./ds 22 ../iso.vtk ""`
+runs the new and old code using BOUNDS_CENTER sorting.
